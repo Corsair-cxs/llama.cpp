@@ -1414,6 +1414,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     need = sched->callback_eval(t, true, sched->callback_eval_user_data);
                 }
 
+                // TODO 这里可能要查一下
                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
 
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);

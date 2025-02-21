@@ -112,8 +112,7 @@ struct ggml_arm_arch_features_type {
     int has_i8mm;
     int has_sve;
     int sve_cnt;
-    int has_sme;
-} ggml_arm_arch_features = {-1, -1, -1, -1, 0, -1};
+} ggml_arm_arch_features = {-1, -1, -1, -1, 0};
 #endif
 
 
@@ -1817,7 +1816,7 @@ inline static float ggml_silu_f32(float x) {
 
 #if __FINITE_MATH_ONLY__
 #error "some routines in ggml.c require non-finite math arithmetics -- pass -fno-finite-math-only to the compiler to fix"
-#error "ref: https://github.com/ggml-org/llama.cpp/pull/7154#issuecomment-2143844461"
+#error "ref: https://github.com/ggerganov/llama.cpp/pull/7154#issuecomment-2143844461"
 #endif
 
 #if defined(__ARM_NEON) && defined(__aarch64__)
@@ -2386,20 +2385,15 @@ bool ggml_is_numa(void) {
 #define HWCAP2_I8MM (1 << 13)
 #endif
 
-#if !defined(HWCAP2_SME)
-#define HWCAP2_SME (1 << 23)
-#endif
-
 static void ggml_init_arm_arch_features(void) {
 #if defined(__linux__) && defined(__aarch64__)
     uint32_t hwcap = getauxval(AT_HWCAP);
     uint32_t hwcap2 = getauxval(AT_HWCAP2);
 
-    ggml_arm_arch_features.has_neon    = !!(hwcap & HWCAP_ASIMD);
+    ggml_arm_arch_features.has_neon = !!(hwcap & HWCAP_ASIMD);
     ggml_arm_arch_features.has_dotprod = !!(hwcap & HWCAP_ASIMDDP);
-    ggml_arm_arch_features.has_i8mm    = !!(hwcap2 & HWCAP2_I8MM);
-    ggml_arm_arch_features.has_sve     = !!(hwcap & HWCAP_SVE);
-    ggml_arm_arch_features.has_sme     = !!(hwcap2 & HWCAP2_SME);
+    ggml_arm_arch_features.has_i8mm = !!(hwcap2 & HWCAP2_I8MM);
+    ggml_arm_arch_features.has_sve  = !!(hwcap & HWCAP_SVE);
 
 #if defined(__ARM_FEATURE_SVE)
     ggml_arm_arch_features.sve_cnt = PR_SVE_VL_LEN_MASK & prctl(PR_SVE_GET_VL);
@@ -2421,11 +2415,6 @@ static void ggml_init_arm_arch_features(void) {
         oldp = 0;
     }
     ggml_arm_arch_features.has_i8mm = oldp;
-
-    if (sysctlbyname("hw.optional.arm.FEAT_SME", &oldp, &size, NULL, 0) != 0) {
-        oldp = 0;
-    }
-    ggml_arm_arch_features.has_sme = oldp;
 
     ggml_arm_arch_features.has_sve = 0;
     ggml_arm_arch_features.sve_cnt = 0;
@@ -2449,12 +2438,6 @@ static void ggml_init_arm_arch_features(void) {
 #else
     ggml_arm_arch_features.has_sve = 0;
     ggml_arm_arch_features.sve_cnt = 0;
-#endif
-
-#if defined(__ARM_FEATURE_SME) || defined(__ARM_FEATURE_SME2)
-    ggml_arm_arch_features.has_sme = 1;
-#else
-    ggml_arm_arch_features.has_sme = 0;
 #endif
 #endif
 }
@@ -7595,7 +7578,7 @@ UseGgmlGemm2:;
     int64_t nchunk1 = (nr1 + chunk_size - 1) / chunk_size;
 
     // If the chunking is poor for the number of threads on this setup, scrap the whole plan.  Re-chunk it by thread.
-    //   Also, chunking by thread was measured to have perform better on NUMA systems.  See https://github.com/ggml-org/llama.cpp/pull/6915
+    //   Also, chunking by thread was measured to have perform better on NUMA systems.  See https://github.com/ggerganov/llama.cpp/pull/6915
     //   In theory, chunking should be just as useful on NUMA and non NUMA systems, but testing disagreed with that.
     if (nchunk0 * nchunk1 < nth * 4 || ggml_is_numa()) {
         // distribute the thread work across the inner or outer loop based on which one is larger
@@ -8959,49 +8942,12 @@ static void ggml_compute_forward_diag_mask_zero(
 }
 
 // ggml_compute_forward_soft_max
-static bool check_invalid_values(const struct ggml_tensor * src0) {
-    if (!src0) {
-        printf("Error: src0 is NULL!\n");
-        return false;
-    }
-
-    const int nc = src0->ne[0];  // 列数
-    const int nr = ggml_nrows(src0);  // 行数
-
-    int nan_count = 0, inf_count = 0;
-
-    // printf("Checking tensor for NaN/Inf values...\n");
-
-    for (int i1 = 0; i1 < nr; i1++) {
-        float * sp = (float *)((char *) src0->data + i1 * src0->nb[1]);
-
-        for (int i = 0; i < nc; ++i) {
-            if (isnan(sp[i])) {
-                nan_count++;
-                // printf("NaN detected at row %d, col %d (index %d)\n", i1, i, i1 * nc + i);
-            }
-            else if (isinf(sp[i])) {
-                inf_count++;
-                // printf("Inf detected at row %d, col %d (index %d)\n", i1, i, i1 * nc + i);
-            }
-        }
-    }
-
-
-    if (nan_count > 0 || inf_count > 0) {
-        // printf("Error: Found invalid values in tensor!");
-        printf("Check complete: NaN count = %d, Inf count = %d\n", nan_count, inf_count);
-        return true;
-    }
-}
 
 static void ggml_compute_forward_soft_max_f32(
         const struct ggml_compute_params * params,
               struct ggml_tensor * dst) {
 
     const struct ggml_tensor * src0 = dst->src[0];
-    
-    // check_invalid_values(src0);
     const struct ggml_tensor * src1 = dst->src[1];
 
     assert(ggml_is_contiguous(dst));
@@ -9012,7 +8958,7 @@ static void ggml_compute_forward_soft_max_f32(
 
     memcpy(&scale,    (float *) dst->op_params + 0, sizeof(float));
     memcpy(&max_bias, (float *) dst->op_params + 1, sizeof(float));
-
+    
     // TODO: handle transposed/permuted matrices
 
     const int ith = params->ith;
@@ -9062,23 +9008,17 @@ static void ggml_compute_forward_soft_max_f32(
         ggml_fp16_t * mp_f16 = src1 ? (ggml_fp16_t *)((char *) src1->data) + (i1%ne01)*ne00 : NULL;
         float       * mp_f32 = src1 ? (float       *)((char *) src1->data) + (i1%ne01)*ne00 : NULL;
 
-        int nan_count = 0, inf_count = 0;
+        int nan_count = 0;
         for (int i = 0; i < nc; ++i) 
         {
             if (isnan(sp[i])) nan_count++;
             else if (isinf(sp[i])) {
-                // printf("Error: sp contains inf value!\n");
-                inf_count++;
+            // printf("Error: sp contains inf value!\n");
                 sp[i] = FLT_MAX;
             }
         }
 
-        if(inf_count)
-        {
-            printf("sp count: col: %d, row: %d, inf: [%d]\n", nc, nr, inf_count);
-        }
-
-        if (nan_count) {
+        if (nan_count > 0) {
             // printf("Error: sp contains %d NaN values, aborting!\n", nan_count);
             exit(1);
         }
@@ -9087,10 +9027,10 @@ static void ggml_compute_forward_soft_max_f32(
         ggml_vec_scale_f32(nc, wp, scale);
         if (mp_f32) {
             if (use_f16) {
-                for (int i = 0; i < nc; ++i) {
+            for (int i = 0; i < nc; ++i) {
                     wp[i] += slope*GGML_FP16_TO_FP32(mp_f16[i]);
-                }
-            } else {
+            }
+        } else {
                 for (int i = 0; i < nc; ++i) {
                     wp[i] += slope*mp_f32[i];
                 }
@@ -14012,9 +13952,6 @@ struct ggml_cplan ggml_graph_plan(
     return cplan;
 }
 
-// ggml_graph_compute_with_ctx
-// ggml_graph_compute
-// check_invalid_values
 static thread_ret_t ggml_graph_compute_thread(void * data) {
     struct ggml_compute_state * state = (struct ggml_compute_state *) data;
     struct ggml_threadpool    * tp    = state->threadpool;
@@ -14034,30 +13971,6 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
-        struct ggml_tensor * tensor = node;
-
-        {
-            if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) 
-            {
-                
-            }
-            else if (ggml_cpu_extra_compute_forward(&params, tensor))
-            {
-
-            }
-            else if(tensor->op == GGML_OP_SOFT_MAX)
-            {
-                // ggml_compute_forward
-                // GGML_OP_SOFT_MAX
-                // ggml_compute_forward_soft_max
-                // ggml_compute_forward_soft_max_f32
-                // check_invalid_values
-                if(check_invalid_values(tensor))
-                {
-                    // printf("node_n: %d, max: %d\n",  node_n, cgraph->n_nodes);
-                }
-            }
-        }
 
         ggml_compute_forward(&params, node);
 
@@ -14334,7 +14247,6 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
                 atomic_store_explicit(&threadpool->n_threads_cur, n_threads, memory_order_relaxed);
             }
 
-            // printf("GGML_USE_OPENMP->ggml_graph_compute_thread: %d\n", omp_get_thread_num());
             ggml_graph_compute_thread(&threadpool->workers[omp_get_thread_num()]);
         }
     } else {
@@ -14366,7 +14278,6 @@ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cpl
     return ret;
 }
 
-// TODO cgraph
 enum ggml_status ggml_graph_compute_with_ctx(struct ggml_context * ctx, struct ggml_cgraph * cgraph, int n_threads) {
     struct ggml_cplan cplan = ggml_graph_plan(cgraph, n_threads, NULL);
 
@@ -14555,14 +14466,6 @@ int ggml_cpu_has_matmul_int8(void) {
 int ggml_cpu_get_sve_cnt(void) {
 #if defined(__ARM_ARCH) && defined(__ARM_FEATURE_SVE)
     return ggml_arm_arch_features.sve_cnt;
-#else
-    return 0;
-#endif
-}
-
-int ggml_cpu_has_sme(void) {
-#if defined(__ARM_ARCH) && defined(__ARM_FEATURE_SME)
-    return ggml_arm_arch_features.has_sme;
 #else
     return 0;
 #endif

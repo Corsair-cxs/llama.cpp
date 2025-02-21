@@ -52,6 +52,7 @@ bool ggml_cl_compute_forward(ggml_backend_t backend, struct ggml_tensor * tensor
 enum GPU_FAMILY {
     ADRENO,
     INTEL,
+     MALI,
     UNKNOWN,
 };
 
@@ -459,6 +460,9 @@ static ggml_backend_opencl_context * ggml_cl2_init(ggml_backend_dev_t dev) {
         }
     } else if (strstr(default_device->name, "Intel")) {
         backend_ctx->gpu_family = GPU_FAMILY::INTEL;
+    } else if (strstr(default_device->name, "Intel")) {
+        backend_ctx->gpu_family = GPU_FAMILY::MALI;
+        GGML_LOG_INFO("Mali GPU detected: %s\n", default_device->name);
     } else {
         GGML_LOG_ERROR("Unsupported GPU: %s\n", default_device->name);
         backend_ctx->gpu_family = GPU_FAMILY::UNKNOWN;
